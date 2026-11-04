@@ -1,0 +1,25 @@
+{
+  "name": "owntrello",
+  "private": true,
+  "description": "Kanban-Boards mit Listen und Karten, Entra-ID-Anmeldung und Rechten pro Board",
+  "workspaces": [
+    "packages/shared",
+    "packages/server",
+    "packages/web"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n server,web -c blue,magenta \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "npm run dev --workspace @owntrello/server",
+    "dev:web": "npm run dev --workspace @owntrello/web",
+    "build": "npm run build --workspace @owntrello/server && npm run build --workspace @owntrello/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "start": "npm run start --workspace @owntrello/server"
+  },
+  "engines": {
+    "node": ">=22.16"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.6"
+  }
+}
