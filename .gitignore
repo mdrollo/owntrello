@@ -1,0 +1,13 @@
+node_modules/
+dist/
+data/
+*.db
+*.db-journal
+
+# Zugangsdaten niemals committen – nur .env.example gehört ins Repo
+.env
+.env.*
+!.env.example
+
+.DS_Store
+*.log
