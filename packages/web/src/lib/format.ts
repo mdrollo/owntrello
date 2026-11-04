@@ -80,6 +80,11 @@ export function describeActivity(a: Activity, withCard = true): string {
       return withCard
         ? `hat ${q(d.title)} von ${q(d.from)} nach ${q(d.to)} verschoben`
         : `hat diese Karte von ${q(d.from)} nach ${q(d.to)} verschoben`;
+    case 'card.transferred':
+      if (d.outgoing) return `hat ${q(d.title)} auf das Board ${q(d.toBoard)} verschoben`;
+      return withCard
+        ? `hat ${q(d.title)} vom Board ${q(d.fromBoard)} nach ${q(d.to)} verschoben`
+        : `hat diese Karte vom Board ${q(d.fromBoard)} hierher verschoben`;
     case 'card.archived':
       return withCard ? `hat ${q(d.title)} archiviert` : 'hat diese Karte archiviert';
     case 'card.restored':

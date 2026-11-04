@@ -278,10 +278,13 @@ export function registerApi(app: FastifyInstance, ctx: AppContext): void {
   app.post('/api/cards/:id/move', async (req) => {
     const { id: cardId } = idParams.parse(req.params);
     const body = z.object({ listId: id, index: z.number().int().min(0) }).parse(req.body);
-    const boardId = guard(req, store.boardOfCard(cardId), 'write');
-    store.moveCard(req.me, cardId, body.listId, body.index);
-    changed(req, boardId, cardId);
-    return { ok: true };
+    // Schreibrecht auf Quelle und Ziel (Ziel ohne Leserecht → 404 „Board nicht gefunden“)
+    guard(req, store.boardOfCard(cardId), 'write');
+    guard(req, store.boardOfList(body.listId), 'write');
+    const { fromBoard, toBoard } = store.moveCard(req.me, cardId, body.listId, body.index);
+    changed(req, fromBoard, cardId);
+    if (toBoard !== fromBoard) changed(req, toBoard, cardId);
+    return { boardId: toBoard };
   });
 
   app.delete('/api/cards/:id', async (req, reply) => {

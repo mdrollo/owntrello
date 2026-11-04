@@ -720,21 +720,84 @@ export class Store {
     });
   }
 
-  /** Karte in eine Liste (desselben Boards) an Position index verschieben */
-  moveCard(me: Me, id: number, listId: number, index: number): void {
+  /**
+   * Karte in eine Liste an Position index verschieben – auch auf ein anderes
+   * Board (Schreibrecht auf beiden prüft die Route). Beim Board-Wechsel werden
+   * Labels übernommen (gleiches Label im Ziel oder dort neu angelegt) und
+   * Mitglieder ohne Zugriff auf das Ziel-Board entfernt.
+   */
+  moveCard(me: Me, id: number, listId: number, index: number): { fromBoard: number; toBoard: number } {
     const card = this.db.prepare('SELECT * FROM cards WHERE id = ?').get(id) as Row;
     const target = this.db.prepare('SELECT * FROM lists WHERE id = ?').get(listId) as Row | undefined;
-    if (!target || target.board_id !== card.board_id) throw badRequest('Zielliste gehört nicht zu diesem Board');
+    if (!target) throw notFound('Zielliste nicht gefunden');
     if (bool(target.archived)) throw badRequest('Zielliste ist archiviert');
+    const fromBoard = card.board_id as number;
+    const toBoard = target.board_id as number;
     tx(this.db, () => {
       if (card.list_id !== listId) {
         const from = this.db.prepare('SELECT title FROM lists WHERE id = ?').get(card.list_id) as Row;
-        this.db.prepare('UPDATE cards SET list_id = ?, updated_at = ? WHERE id = ?').run(listId, now(), id);
+        this.db
+          .prepare('UPDATE cards SET list_id = ?, board_id = ?, updated_at = ? WHERE id = ?')
+          .run(listId, toBoard, now(), id);
         this.reorder('cards', 'list_id', card.list_id, -1, Number.MAX_SAFE_INTEGER);
-        this.log(me, card.board_id, 'card.moved', { title: card.title, from: from.title, to: target.title }, id);
+        if (fromBoard === toBoard) {
+          this.log(me, toBoard, 'card.moved', { title: card.title, from: from.title, to: target.title }, id);
+        } else {
+          this.transferLabels(id, toBoard);
+          this.dropMembersWithoutAccess(id, toBoard);
+          const titles = this.db.prepare('SELECT id, title FROM boards WHERE id IN (?, ?)').all(fromBoard, toBoard) as Row[];
+          const boardTitle = (b: number) => titles.find((t) => t.id === b)?.title ?? '';
+          // Im alten Board ohne Kartenbezug: die Karte ist dort nicht mehr zu öffnen
+          this.log(me, fromBoard, 'card.transferred', {
+            title: card.title,
+            fromBoard: boardTitle(fromBoard),
+            toBoard: boardTitle(toBoard),
+            outgoing: true,
+          });
+          this.log(
+            me,
+            toBoard,
+            'card.transferred',
+            { title: card.title, fromBoard: boardTitle(fromBoard), toBoard: boardTitle(toBoard), to: target.title, outgoing: false },
+            id,
+          );
+        }
       }
       this.reorder('cards', 'list_id', listId, id, index);
     });
+    return { fromBoard, toBoard };
+  }
+
+  /** Labels der Karte auf Labels des Ziel-Boards abbilden (gleicher Name und Farbe, sonst neu) */
+  private transferLabels(cardId: number, toBoard: number): void {
+    const labels = this.db
+      .prepare('SELECT l.* FROM card_labels cl JOIN labels l ON l.id = cl.label_id WHERE cl.card_id = ?')
+      .all(cardId) as Row[];
+    this.db.prepare('DELETE FROM card_labels WHERE card_id = ?').run(cardId);
+    for (const l of labels) {
+      const match = this.db
+        .prepare('SELECT id FROM labels WHERE board_id = ? AND name = ? AND color = ? ORDER BY id LIMIT 1')
+        .get(toBoard, l.name, l.color) as Row | undefined;
+      const labelId =
+        match?.id ??
+        Number(
+          this.db.prepare('INSERT INTO labels (board_id, name, color) VALUES (?, ?, ?)').run(toBoard, l.name, l.color)
+            .lastInsertRowid,
+        );
+      this.db.prepare('INSERT OR IGNORE INTO card_labels (card_id, label_id) VALUES (?, ?)').run(cardId, labelId);
+    }
+  }
+
+  private dropMembersWithoutAccess(cardId: number, boardId: number): void {
+    const members = this.db
+      .prepare('SELECT u.* FROM card_members m JOIN users u ON u.id = m.user_id WHERE m.card_id = ?')
+      .all(cardId) as Row[];
+    for (const u of members) {
+      const user: Me = { ...toUser(u), isAdmin: bool(u.is_admin) };
+      if (!this.permission(user, boardId).canRead) {
+        this.db.prepare('DELETE FROM card_members WHERE card_id = ? AND user_id = ?').run(cardId, u.id);
+      }
+    }
   }
 
   deleteCard(id: number): string[] {

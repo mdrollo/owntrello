@@ -161,6 +161,8 @@ export type ActivityType =
   | 'card.created'
   | 'card.renamed'
   | 'card.moved'
+  /** auf ein anderes Board verschoben */
+  | 'card.transferred'
   | 'card.archived'
   | 'card.restored'
   | 'card.due'

@@ -17,10 +17,11 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import type { Activity, Attachment, CardDetail, Checklist, Comment } from '@owntrello/shared';
+import type { Activity, Attachment, BoardDetail, BoardSummary, CardDetail, Checklist, Comment } from '@owntrello/shared';
 import { api, ApiError } from '../lib/api';
 import { dateTime, describeActivity, dueState, fileSize, fromLocalInput, relativeTime, toLocalInput } from '../lib/format';
 import { RichText } from '../lib/richText';
+import { navigate } from '../lib/router';
 import { useBoard } from './BoardPage';
 import { LabelManager } from './Labels';
 import { NoteEditor } from './NoteEditor';
@@ -38,14 +39,20 @@ export function CardDialog({ cardId, onClose }: { cardId: number; onClose: () =>
 
   const load = useCallback(async () => {
     try {
-      setCard(await api.cards.get(cardId));
+      const c = await api.cards.get(cardId);
+      if (c.boardId !== board.board.id) {
+        // Inzwischen auf ein anderes Board verschoben (von hier oder von jemand anderem)
+        navigate(`/b/${c.boardId}/c/${c.id}`);
+        return;
+      }
+      setCard(c);
     } catch (err) {
       if (err instanceof ApiError && err.status === 404) {
         notify('Die Karte gibt es nicht mehr.');
         onClose();
       } else notify(err instanceof Error ? err.message : String(err));
     }
-  }, [cardId, notify, onClose]);
+  }, [cardId, notify, onClose, board.board.id]);
 
   // Bei jeder Änderung am Board (eigene oder fremde) neu laden
   useEffect(() => {
@@ -436,31 +443,88 @@ function DueForm({ card, act, onClose }: { card: CardDetail; act: (fn: () => Pro
 }
 
 function MoveForm({ card, act, onClose }: { card: CardDetail; act: (fn: () => Promise<unknown>) => Promise<void>; onClose: () => void }) {
-  const { detail } = useBoard();
+  const { detail, reload } = useBoard();
+  const run = useRun();
+  const notify = useNotify();
+  const [boards, setBoards] = useState<BoardSummary[]>([]);
+  const [boardId, setBoardId] = useState(detail.board.id);
+  // Ziel-Board: das aktuelle aus dem Kontext, andere werden nachgeladen
+  const [target, setTarget] = useState<BoardDetail>(detail);
   const [listId, setListId] = useState(card.listId);
-  const count = detail.cards.filter((c) => c.listId === listId && c.id !== card.id).length;
-  const current = detail.cards
+
+  useEffect(() => {
+    void run(async () => {
+      const all = (await api.boards.list()).boards;
+      setBoards(all.filter((b) => b.permission.canWrite && !b.archived));
+    });
+  }, [run]);
+
+  useEffect(() => {
+    if (boardId === detail.board.id) {
+      setTarget(detail);
+      return;
+    }
+    let cancelled = false;
+    void run(async () => {
+      const d = await api.boards.get(boardId);
+      if (!cancelled) setTarget(d);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [boardId, detail, run]);
+
+  // Beim Board-Wechsel erste Liste vorwählen
+  useEffect(() => {
+    if (!target.lists.some((l) => l.id === listId)) setListId(target.lists[0]?.id ?? 0);
+  }, [target, listId]);
+
+  const count = target.cards.filter((c) => c.listId === listId && c.id !== card.id).length;
+  const current = target.cards
     .filter((c) => c.listId === card.listId)
     .sort((a, b) => a.pos - b.pos)
     .findIndex((c) => c.id === card.id);
-  const [index, setIndex] = useState(listId === card.listId && current >= 0 ? current : count);
-  useEffect(() => {
-    setIndex(listId === card.listId && current >= 0 ? current : count);
-  }, [listId, card.listId, current, count]);
+  const defaultIndex = listId === card.listId && current >= 0 ? current : count;
+  const [index, setIndex] = useState(defaultIndex);
+  useEffect(() => setIndex(defaultIndex), [defaultIndex]);
+
+  const otherBoard = target.board.id !== detail.board.id;
+  const ready = target.board.id === boardId && target.lists.some((l) => l.id === listId);
 
   return (
     <form
       className="stack"
       onSubmit={async (e) => {
         e.preventDefault();
-        await act(() => api.cards.move(card.id, listId, index));
+        if (!ready) return;
+        if (!otherBoard) {
+          await act(() => api.cards.move(card.id, listId, index));
+          onClose();
+          return;
+        }
+        const res = await run(() => api.cards.move(card.id, listId, index));
+        if (!res) return;
         onClose();
+        notify(`Karte nach „${target.board.title}“ verschoben.`);
+        await reload();
+        navigate(`/b/${res.boardId}/c/${card.id}`);
       }}
     >
       <label className="field">
+        <span>Board</span>
+        <select value={boardId} onChange={(e) => setBoardId(Number(e.target.value))}>
+          {(boards.length ? boards : [{ id: detail.board.id, title: detail.board.title }]).map((b) => (
+            <option key={b.id} value={b.id}>
+              {b.title}
+              {b.id === detail.board.id ? ' (aktuell)' : ''}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="field">
         <span>Liste</span>
-        <select value={listId} onChange={(e) => setListId(Number(e.target.value))}>
-          {detail.lists.map((l) => (
+        <select value={listId} onChange={(e) => setListId(Number(e.target.value))} disabled={!target.lists.length}>
+          {target.lists.map((l) => (
             <option key={l.id} value={l.id}>
               {l.title}
               {l.id === card.listId ? ' (aktuell)' : ''}
@@ -478,7 +542,14 @@ function MoveForm({ card, act, onClose }: { card: CardDetail; act: (fn: () => Pr
           ))}
         </select>
       </label>
-      <button type="submit" className="btn primary" disabled={card.archived}>
+      {otherBoard && (
+        <p className="muted small">
+          Labels werden übernommen (fehlende im Ziel-Board angelegt). Mitglieder ohne Zugriff auf das Ziel-Board werden von
+          der Karte entfernt. Kommentare, Anhänge und Checklisten wandern mit.
+        </p>
+      )}
+      {otherBoard && !target.lists.length && <p className="muted small">Das Ziel-Board hat noch keine Liste.</p>}
+      <button type="submit" className="btn primary" disabled={card.archived || !ready}>
         Verschieben
       </button>
     </form>

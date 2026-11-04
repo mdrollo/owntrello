@@ -105,7 +105,8 @@ export const api = {
         coverAttachmentId: number | null;
       }>,
     ) => request<CardSummary>('PATCH', `/api/cards/${id}`, patch),
-    move: (id: number, listId: number, index: number) => request('POST', `/api/cards/${id}/move`, { listId, index }),
+    move: (id: number, listId: number, index: number) =>
+      request<{ boardId: number }>('POST', `/api/cards/${id}/move`, { listId, index }),
     remove: (id: number) => request<void>('DELETE', `/api/cards/${id}`),
     setLabel: (id: number, labelId: number, on: boolean) =>
       request(on ? 'PUT' : 'DELETE', `/api/cards/${id}/labels/${labelId}`),

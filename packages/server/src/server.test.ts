@@ -300,6 +300,70 @@ describe('Listen und Karten', () => {
   });
 });
 
+describe('Karten zwischen Boards verschieben', () => {
+  beforeEach(async () => {
+    await call(ANNA, 'GET', '/api/me');
+    await call(BEN, 'GET', '/api/me');
+    await call(CARLA, 'GET', '/api/me');
+  });
+
+  it('übernimmt Labels, entfernt Mitglieder ohne Zugriff und schreibt den Verlauf in beide Boards', async () => {
+    const from = await newBoard(BEN, 'Quelle');
+    const to = await newBoard(BEN, 'Ziel');
+    await call(BEN, 'PUT', `/api/boards/${from.board.id}/members/oid-carla`, { canWrite: true });
+    const card = (await call<CardSummary>(BEN, 'POST', `/api/lists/${from.lists[0]!.id}/cards`, { title: 'Wandert' })).body;
+    // Label mit gleicher Farbe und Name existiert im Ziel (leer), eins mit Namen nicht
+    await call(BEN, 'PUT', `/api/cards/${card.id}/labels/${from.labels[0]!.id}`);
+    await call(BEN, 'PATCH', `/api/labels/${from.labels[1]!.id}`, { name: 'Wichtig' });
+    await call(BEN, 'PUT', `/api/cards/${card.id}/labels/${from.labels[1]!.id}`);
+    await call(BEN, 'PUT', `/api/cards/${card.id}/members/oid-ben`);
+    await call(BEN, 'PUT', `/api/cards/${card.id}/members/oid-carla`);
+    await call(BEN, 'POST', `/api/cards/${card.id}/comments`, { text: 'kommt mit' });
+
+    const moved = await call<{ boardId: number }>(BEN, 'POST', `/api/cards/${card.id}/move`, { listId: to.lists[1]!.id, index: 0 });
+    expect(moved).toEqual({ status: 200, body: { boardId: to.board.id } });
+
+    const fromDetail = (await call<BoardDetail>(BEN, 'GET', `/api/boards/${from.board.id}`)).body;
+    expect(fromDetail.cards).toEqual([]);
+    const toDetail = (await call<BoardDetail>(BEN, 'GET', `/api/boards/${to.board.id}`)).body;
+    const c = toDetail.cards[0]!;
+    expect(c).toMatchObject({ id: card.id, boardId: to.board.id, listId: to.lists[1]!.id, memberIds: ['oid-ben'] });
+    const labels = c.labelIds.map((id) => toDetail.labels.find((l) => l.id === id)!);
+    expect(labels.map((l) => [l.name, l.color])).toEqual([
+      ['', from.labels[0]!.color],
+      ['Wichtig', from.labels[1]!.color],
+    ]);
+    expect(labels[0]!.id).toBe(to.labels[0]!.id); // vorhandenes Label wiederverwendet
+    expect(toDetail.labels).toHaveLength(7); // „Wichtig“ neu angelegt
+
+    const detail = (await call<CardDetail>(BEN, 'GET', `/api/cards/${card.id}`)).body;
+    expect(detail.comments).toHaveLength(1);
+    expect(detail.activity[0]).toMatchObject({ type: 'card.transferred', data: { fromBoard: 'Quelle', to: 'In Arbeit' } });
+    const oldFeed = (await call<{ activity: { type: string; cardId: number | null; data: object }[] }>(
+      BEN,
+      'GET',
+      `/api/boards/${from.board.id}/activity`,
+    )).body.activity;
+    expect(oldFeed[0]).toMatchObject({ type: 'card.transferred', cardId: null, data: { toBoard: 'Ziel', outgoing: true } });
+  });
+
+  it('braucht Schreibrecht auf beiden Boards', async () => {
+    const mine = await newBoard(CARLA, 'Carlas');
+    const bens = await newBoard(BEN, 'Bens');
+    const card = (await call<CardSummary>(CARLA, 'POST', `/api/lists/${mine.lists[0]!.id}/cards`, { title: 'K' })).body;
+    // ohne Zugriff auf das Ziel: unsichtbar
+    expect((await call(CARLA, 'POST', `/api/cards/${card.id}/move`, { listId: bens.lists[0]!.id, index: 0 })).status).toBe(404);
+    // nur Lesen auf dem Ziel
+    await call(BEN, 'PUT', `/api/boards/${bens.board.id}/members/oid-carla`, { canRead: true });
+    expect((await call(CARLA, 'POST', `/api/cards/${card.id}/move`, { listId: bens.lists[0]!.id, index: 0 })).status).toBe(403);
+    // mit Schreibrecht geht es
+    await call(BEN, 'PUT', `/api/boards/${bens.board.id}/members/oid-carla`, { canWrite: true });
+    expect((await call(CARLA, 'POST', `/api/cards/${card.id}/move`, { listId: bens.lists[0]!.id, index: 0 })).status).toBe(200);
+    // Die Karte liegt jetzt auf Bens Board
+    expect((await call(BEN, 'GET', `/api/cards/${card.id}`)).status).toBe(200);
+  });
+});
+
 describe('Anhänge', () => {
   function multipart(filename: string, mime: string, content: Buffer) {
     const boundary = '----owntrello-test';

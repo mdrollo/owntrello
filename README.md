@@ -37,7 +37,7 @@ Datenbank und Anhänge liegen im Volume `owntrello-data` (`/data`).
 | --- | --- |
 | Boards | anlegen, umbenennen, Hintergrundfarbe, Stern, archivieren (schreibgeschützt), löschen |
 | Listen | anlegen, umbenennen, per Drag & Drop sortieren, archivieren, löschen |
-| Karten | anlegen (Enter = nächste), per Drag & Drop innerhalb und zwischen Listen verschieben, Dialog mit Titel, Beschreibung (Fett, Kursiv, Listen, Links), Labels, Mitglieder, Fälligkeit mit „erledigt“, Checklisten, Anhänge (auch per Drag & Drop von Dateien, Bilder als Titelbild), Kommentare, Verlauf, archivieren, löschen |
+| Karten | anlegen (Enter = nächste), per Drag & Drop innerhalb und zwischen Listen verschieben, über „Verschieben“ auch auf ein anderes Board, Dialog mit Titel, Beschreibung (Fett, Kursiv, Listen, Links), Labels, Mitglieder, Fälligkeit mit „erledigt“, Checklisten, Anhänge (auch per Drag & Drop von Dateien, Bilder als Titelbild), Kommentare, Verlauf, archivieren, löschen |
 | Board-Menü | Labels verwalten, Archiv (wiederherstellen/löschen), Aktivität, Board verlassen |
 | Filter | Stichwort, Labels, Mitglieder, Fälligkeit |
 | Live | Änderungen anderer erscheinen sofort (Server-Sent Events) |
@@ -79,7 +79,7 @@ docs/       Hosting auf Azure
 | POST | `/api/boards/:id/members` | Freigabe per E-Mail `{ email, canRead, canWrite, canManage }` |
 | PUT | `/api/boards/:id/members/:userId` | Rechte ändern (ohne `canRead` = entfernen) |
 | POST | `/api/lists/:id/cards` | Karte anlegen |
-| POST | `/api/cards/:id/move` | Karte verschieben `{ listId, index }` |
+| POST | `/api/cards/:id/move` | Karte verschieben `{ listId, index }` – Liste darf auf einem anderen Board liegen (Schreibrecht auf beiden) |
 | GET | `/api/cards/:id` | Karte mit Checklisten, Kommentaren, Anhängen, Verlauf |
 | POST | `/api/cards/:id/attachments` | Anhang hochladen (multipart) |
 
