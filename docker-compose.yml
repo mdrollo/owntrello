@@ -1,0 +1,18 @@
+# Lokal im Container starten:  docker compose up --build
+# Danach im Browser: http://localhost:8080 (ohne Anmeldung, als Entwicklungsbenutzer)
+services:
+  owntrello:
+    build: .
+    ports:
+      - "8080:8080"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      TZ: Europe/Berlin
+    volumes:
+      - owntrello-data:/data
+    restart: unless-stopped
+
+volumes:
+  owntrello-data:
